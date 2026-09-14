@@ -24,7 +24,7 @@ The protocol contract that exposes every order-creation choice. All choices on i
 The order types. Each is created by exercising a choice on AMMRules. Swap orders either settle immediately from wallet holdings (3.2) or queue against committed allocations and settle when the venue fills them (3.3).
 
 **`Allocation`** ([token-standard V2, committed](https://github.com/canton-foundation/cips/blob/main/cip-0112/cip-0112.md#416-committed-allocations-for-prefunded-trading-and-iterated-settlement)) : _per user, per pool, per instrument_\
-A committed allocation that pre-funds swap order queueing. On every fill, settlement moves tokens between the user's and the vault's allocations. The allocation contract is never consumed; each fill updates it. See section 3.3.
+A committed allocation that pre-funds swap order queueing. On every fill, settlement moves tokens between the user's and the vault's allocations. Each fill archives the allocation contract and recreates it with updated funding, so track allocations by their metadata rather than by contract ID. See section 3.3.
 
 **`TradingBalance`** : _per user, per instrument_\
 Vault-held collateral of a single token, owned by the user. Liquidity deposit and withdrawal orders draw from and settle into TradingBalances. In a future release, these will be deprecated in favor of committed allocations (above).&#x20;
@@ -178,7 +178,9 @@ In a future release, we will add a daml choice to `AMMRules` which will allow a 
 
 **3.3.2 - Create a committed allocation**
 
-One call per pool instrument. For the instrument you intend to _sell_, pass `initialFunding` and the holdings that fund it. For the instrument you intend to _receive_, pass `initialFunding = None` and no holdings - an empty allocation is valid and simply receives settlement proceeds.
+A queued trade requires **two allocations: one for the input instrument and one for the output instrument**. Both must exist before you submit an order (3.3.4); the venue cannot settle a fill without both.
+
+For the instrument you intend to _sell_, pass `initialFunding` and the holdings that fund it. For the instrument you intend to _receive_, the allocation may start empty (`initialFunding = None`, no holdings) or funded, as you prefer. Either way it is **required**, since it is what receives the settlement proceeds.
 
 You will need:
 
@@ -502,6 +504,16 @@ nonconsuming choice AMMRules_WithdrawTradingBalance : TransferInstructionResult
 {% hint style="info" %}
 **NOTE:** If the recipient has a transfer pre-approval for the output instrument, the tokens arrive in the recipient's wallet with no further action. If the recipient has **no pre-approval**, the tokens will appear as a transfer offer which the recipient must accept.
 {% endhint %}
+
+#### 3.5 - Monitor for filled orders
+
+For orders created from holdings (3.2), when an order is filled by the venue, the original order contract, the consumed input(s), and the new output(s) are produced in the _same_ transaction. Detection is therefore as simple as watching for the order's archival.
+
+**Recommended**\
+Use **PQS** (Participant Query Store) to subscribe to the relevant template streams.
+
+**Without PQS**\
+Query the participant's contracts endpoint directly for active `SwapOrder` contracts filtered by your actor. When the contract disappears, the fill has occurred; the order's outputs are created in the same transaction.
 
 ### 4.0 - Type Reference
 
