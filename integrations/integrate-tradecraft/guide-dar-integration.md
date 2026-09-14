@@ -6,7 +6,7 @@ icon: file-shield
 
 ### Building on _Tradecraft_.
 
-**INTEGRATION GUIDE - V1.1.22**\
+**INTEGRATION GUIDE - V1.3.3**\
 A developer's reference for integrating the Canton-native AMM into your application. The Tradecraft daml package is available on request. Contact us by email at [info@tradecraft.fi](mailto:info@tradecraft.fi).
 
 ***
@@ -20,14 +20,14 @@ Tradecraft is a decentralized exchange protocol built natively on the Canton Net
 **`AMMRules`** : _singleton_\
 The protocol contract that exposes every order-creation choice. All choices on it are _nonconsuming_, so the same contract is reused across every interaction. You will need its disclosure once per pool.
 
-**`SwapOrder` - `DepositOrder` - `WithdrawOrder`**\
-The order types. Each is created by exercising a choice on AMMRules. Swap orders either settle immediately from wallet holdings (3.2) or queue against committed allocations and settle when the venue fills them (3.3).
+**`SwapOrder` - `DepositOrder` - `WithdrawOrder`** : _the order types_\
+Each is created by exercising a choice on AMMRules. Swap orders either settle immediately from wallet holdings (3.2) or queue against committed allocations and settle when the venue fills them (3.3).
 
-**`Allocation`** ([token-standard V2, committed](https://github.com/canton-foundation/cips/blob/main/cip-0112/cip-0112.md#416-committed-allocations-for-prefunded-trading-and-iterated-settlement)) : _per user, per pool, per instrument_\
+**`Allocation`** ([token-standard-v2, committed](https://github.com/canton-foundation/cips/blob/main/cip-0112/cip-0112.md#416-committed-allocations-for-prefunded-trading-and-iterated-settlement)) : _per user, per pool, per instrument_\
 A committed allocation that pre-funds swap order queueing. On every fill, settlement moves tokens between the user's and the vault's allocations. Each fill archives the allocation contract and recreates it with updated funding, so track allocations by their metadata rather than by contract ID. See section 3.3.
 
 **`TradingBalance`** : _per user, per instrument_\
-Vault-held collateral of a single token, owned by the user. Liquidity deposit and withdrawal orders draw from and settle into TradingBalances. In a future release, these will be deprecated in favor of committed allocations (above).&#x20;
+Vault-held collateral of a single token, owned by the user. Liquidity deposit and withdrawal orders draw from and settle into TradingBalances. In a future release, these will be deprecated in favor of committed allocations (above).
 
 **The high-level workflow**
 
@@ -69,14 +69,14 @@ All three order types (`SwapOrder`, `DepositOrder`, and `WithdrawOrder`) are cre
 
 The workflow is organized into three tracks. Read the one that matches your integration:
 
-* **3.2 - "Immediate" swap orders** : the simple path for swaps.
+* **3.2 - "Immediate" swap orders** : the simplest path for swaps.
 * **3.3 - "Queued" swap orders** : use committed allocations for regular trading.
 * **3.4 - Liquidity operations** : adding and removing pool liquidity.
 
-Queued and immediate swap orders are complementary options. Integrators can offer either or both per trade. Immediate orders require transfer pre-approval on both tokens; queued orders settle through committed allocations, no pre-approval needed.
+Queued and immediate swap orders are complementary options. Integrators can offer either or both per trade. Immediate orders require transfer pre-approval on both tokens; queued orders settle through committed allocations and require no pre-approval.
 
 {% hint style="info" %}
-**NOTE:** There is now an [API endpoint for token allocation factory](https://docs.tradecraft.fi/api/routes/tokens#get-allocation-factory-token), which may be required for some of the steps described below. See [https://docs.tradecraft.fi/api](https://docs.tradecraft.fi/api) for more information.
+**NOTE:** An [API endpoint for the token allocation factory](https://docs.tradecraft.fi/api/routes/tokens#get-allocation-factory-token) may be required for some of the steps described below. See [https://docs.tradecraft.fi/api](https://docs.tradecraft.fi/api) for more information.
 {% endhint %}
 
 #### 3.1 - Discover trading pairs
@@ -91,14 +91,14 @@ $ curl https://api.tradecraft.fi/v1/pools | jq
 **NOTE:** Each pool's `ammId` is the only identifier you need to route an order to it. The venue and vault are the same across every pool on a given network.
 {% endhint %}
 
-#### 3.2 - "Immediate" Swap Orders: _the simplest path_ **(\~23 kB)**
+#### 3.2 - "Immediate" swap orders: _the simplest path_ **(\~23 kB)**
 
 **Best for wallets that want to surface swaps to UI users, and for integrations that are not expected to make regular trades.**
 
 {% hint style="danger" %}
-**Critical safety notice:&#x20;**_**For immediate mode swaps a transfer pre-approval MUST be active for both tokens the user is swapping between BEFORE the order is submitted.**_
+**Critical safety notice:_For immediate mode swaps, a transfer pre-approval MUST be active for both tokens the user is swapping between BEFORE the order is submitted._**
 
-Without it, **the swap still occurs** where the input is consumed on fill, but **NO funds are returned to the wallet**. If the order fails or is cancelled, pre-approval is required to receive the input tokens back. In both scenarios, missing pre-approval = **loss of funds**.
+Without it, **the swap still executes**: the input is consumed on fill, but **NO funds are returned to the wallet**. If the order fails or is cancelled, pre-approval is required to receive the input tokens back. In both scenarios, missing pre-approval = **loss of funds**.
 {% endhint %}
 
 This call allocates the input amount from the actor's wallet holdings and creates the `SwapOrder`. On fill, the input is consumed and the output settles to the actor's wallet atomically.
@@ -112,7 +112,7 @@ The `what` field's two constructors describe the two natural shapes of a swap in
 **NOTE:** Only `Short` is currently supported. `Long` orders fail with `"Only short orders are currently supported"`.
 {% endhint %}
 
-We highly recommend you test this version of swap order creation on testnet, confirming that tokens are received in the destination wallet before going live.
+We highly recommend testing immediate swaps on testnet first, confirming that tokens arrive in the destination wallet before going live.
 
 **Choice Signature**
 
@@ -123,7 +123,7 @@ We highly recommend you test this version of swap order creation on testnet, con
     ammId : Text
       -- ^ Identifies which AMM pool this order is for, as returned by /pools
     what : SwapDirection
-      -- ^ Direction and amount of swap. Short only - see NOTE below.
+      -- ^ Direction and amount of swap. Short only - see NOTE above.
     minOut : Optional Decimal
       -- ^ Minimum output amount (slippage protection)
     holdingCids : [ContractId Holding]
@@ -140,20 +140,20 @@ We highly recommend you test this version of swap order creation on testnet, con
 data AMMRules_CreateSwapOrderFromHoldingsV2_Result = AMMRules_CreateSwapOrderFromHoldingsV2_Result
   with
     swapOrderCid : ContractId V2.SwapOrder
-      -- ^ The pending order (the same queryable SwapOrder template shown above)
+      -- ^ The pending order; queryable until it fills
     changeCids : [ContractId Holding]
       -- ^ Wallet change : input holdings in excess of the swap amount
 ```
 
 {% hint style="warning" %}
-**Reminder : no pre-approval on the output token = the swap will execute but no funds will be returned.**
+**Reminder: no pre-approval on the output token = the swap will execute but no funds will be returned.**
 {% endhint %}
 
 #### 3.3 - "Queued" swap orders: _committed allocations for regular trading_
 
 **Best for inventory providers and market makers who anticipate making regular trades against the same pool.**
 
-The actor pre-funds a **committed allocation** once per pool instrument, then queues swap orders against it. Orders settle through the allocation trade after trade, and no transfer pre-approval is required.
+The actor pre-funds a **committed allocation** for each pool instrument, then queues swap orders against them. Orders settle through the allocations trade after trade, and no transfer pre-approval is required.
 
 **3.3.1 - Committed allocations**
 
@@ -169,7 +169,7 @@ Tradecraft settlement allocations always have the same shape:
 {% hint style="danger" %}
 **Critical: a committed allocation with no settlement deadline cannot be withdrawn by its owner.** Only the venue (the sole executor) can settle or cancel it. Funds leave a committed allocation only through swap settlement or a venue-side cancellation - treat allocations as working capital, not storage, and coordinate with the venue before committing large balances.\
 \
-In a future release, we will add a daml choice to `AMMRules` which will allow a user to cancel an allocation, provided they do not have any executed but not yet settled trades pending.
+In a future release, we will add a Daml choice to `AMMRules` that allows a user to cancel an allocation, provided they have no executed-but-unsettled trades pending.
 {% endhint %}
 
 {% hint style="warning" %}
@@ -230,7 +230,7 @@ data AMMRules_CreateSettlementAllocation_Result = AMMRules_CreateSettlementAlloc
 
 **3.3.3 - Top up a committed allocation**
 
-Adds funds to a live allocation from the actor's spare holdings in a single atomic transaction. You will additionally need the `SettlementFactory` contract and its choice context for the instrument's admin, served by the same utility service at `POST /registry/allocation/v2/settlement-factory`. Same shape as the allocation-factory call: the body wraps the `SettlementFactory_SettleBatch` choice arguments, and the response's `factoryId` and `choiceContext` provide `settlementFactoryCid` and `settlementExtraArgs`.
+This choice adds funds to a live allocation from the actor's spare holdings in a single atomic transaction. You will additionally need the `SettlementFactory` contract and its choice context for the instrument's admin, served by the same utility service at `POST /registry/allocation/v2/settlement-factory`. The request has the same shape as the allocation-factory call: the body wraps the `SettlementFactory_SettleBatch` choice arguments, and the response's `factoryId` and `choiceContext` provide `settlementFactoryCid` and `settlementExtraArgs`.
 
 **Choice Signature**
 
@@ -269,7 +269,7 @@ data AMMRules_FundSettlementAllocation_Result = AMMRules_FundSettlementAllocatio
 A queued V2 swap order is pure intent; no tokens move at submission. When the venue fills the order, settlement debits the actor's input allocation and credits their output allocation. No wallet transfer pre-approval is needed. The output lands in the actor's allocation, not their wallet.
 
 {% hint style="warning" %}
-**Prerequisite:** before submitting a queued swap, the actor must hold a committed allocation for the _input_ instrument funded with at least the swap input amount, and a committed allocation for the _output_ instrument (an empty receiving allocation is fine). If funding is insufficient or an allocation is missing at execution time, the order fails without touching pool state.
+**Prerequisite:** Before submitting a queued swap, the actor must hold a committed allocation for the _input_ instrument funded with at least the swap input amount, and a committed allocation for the _output_ instrument (an empty receiving allocation is fine). If funding is insufficient or an allocation is missing at execution time, the order fails without touching pool state.
 {% endhint %}
 
 **Choice Signature**
@@ -280,7 +280,7 @@ nonconsuming choice AMMRules_CreateSwapOrderV2 : ContractId V2.SwapOrder
     actor : Party
     ammId : Text
     what : SwapDirection
-      -- ^ Direction and amount of swap. Long and Short are both
+      -- ^ Direction and amount of swap. Currently only Short is
       --   supported on queued orders.
     minOut : Optional Decimal
       -- ^ Minimum output amount (slippage protection)
@@ -301,14 +301,14 @@ nonconsuming choice AMMRules_CreateSwapOrderV2 : ContractId V2.SwapOrder
 **Lifecycle**
 
 1. The order is created (template `TC.V4.SwapOrderV2.SwapOrder`, signatories `vault` + `actor`) and is queryable like any other order.
-2. When the venue fills the order it is archived - monitor for archival as in 3.5. An order that cannot be filled (slippage, insufficient allocation funding) is cancelled with a structured `CancellationReason` on-chain.
+2. When the venue fills the order, it is archived - monitor for archival as in 3.5. An order that cannot be filled (slippage, insufficient allocation funding) is cancelled with a structured `CancellationReason` on-chain.
 3. Settlement moves tokens between the actor's and the vault's committed allocations. The actor's allocations are archived and recreated with updated funding - this is why tracking them by metadata matters.
 
 To abandon a pending order, the actor exercises `SwapOrder_WithdrawV3`. Because no funds have moved yet, there is nothing to refund - the input stays in the actor's committed allocation throughout.
 
 **3.3.5 - Submit queued swap orders in bulk**
 
-If you submit many orders at once, avoid paying for one transaction per order. Provision a `SwapOrderBatcher` once via `AMMRules_CreateSwapOrderBatcher`, then exercise `SwapOrderBatcher_CreateOrdersV2` on it to create a whole batch in a single transaction. Because the actor observes the batcher (unlike `AMMRules`, which they only receive via disclosure), the submission comes back as one exercise event instead of one create event per order.
+If you submit many orders at once, avoid the cost of one transaction per order. Provision a `SwapOrderBatcher` once via `AMMRules_CreateSwapOrderBatcher`, then exercise `SwapOrderBatcher_CreateOrdersV2` on it to create a whole batch in a single transaction. Because the actor observes the batcher (unlike `AMMRules`, which they only receive via disclosure), the submission comes back as one exercise event instead of one create event per order.
 
 **Choice Signatures**
 
@@ -346,11 +346,11 @@ data SwapOrderSpec = SwapOrderSpec
 
 **Best for liquidity providers who want to supply capital to a pool and earn fees.**
 
-Deposit and withdrawal orders draw from and settle into `TradingBalance` contracts (vault-held collateral of a single token, owned by the user) so funding and managing `TradingBalance` is part of every LP workflow.
+Deposit and withdrawal orders draw from and settle into `TradingBalance` contracts (vault-held collateral of a single token, owned by the user), so funding and managing `TradingBalance` contracts is part of every LP workflow.
 
-**3.4.1 - Add `TradingBalance`  (\~10 kB)**
+**3.4.1 - Add `TradingBalance` (\~10 kB)**
 
-Depositing tokens into a `TradingBalance` is a two-call sequence: fetch the disclosure for the AMMRules contract, then exercise the deposit choice.
+Depositing tokens into a `TradingBalance` is a two-call sequence: fetch the disclosure for the `AMMRules` contract, then exercise the deposit choice.
 
 **Fetching the `AMMRules` disclosure**
 
@@ -379,12 +379,12 @@ nonconsuming choice AMMRules_AddTradingBalance : ContractId TradingBalance
 ```
 
 {% hint style="info" %}
-**TIP:** Avoid UTXO Fragmentation. Pass _**every**_ known `TradingBalance` contract ID for the given asset into `existingBalances` on every call. They will be consolidated atomically into a single new balance, keeping your contract set tidy and reducing downstream gas costs.
+**TIP:** Avoid UTXO fragmentation. Pass _**every**_ known `TradingBalance` contract ID for the given asset into `existingBalances` on every call. They will be consolidated atomically into a single new balance, keeping your contract set tidy and reducing downstream gas costs.
 {% endhint %}
 
-**3.4.2 - Deposit orders:&#x20;**_**adding liquidity to a pool**_**&#x20;(\~5 kB)**
+**3.4.2 - Deposit orders: _adding liquidity to a pool_ (\~5 kB)**
 
-This choice deposits liquidity into a pool, and mints LP tokens into a `TradingBalance`. Both `amount1` and `amount2` must already exist as funded `TradingBalance` for the actor (3.4.1).
+This choice deposits liquidity into a pool and mints LP tokens into a `TradingBalance`. Both `amount1` and `amount2` must already exist as funded `TradingBalance` contracts for the actor (3.4.1).
 
 **Choice Signature**
 
@@ -422,9 +422,9 @@ template DepositOrder
 **NOTE:** `amount1` and `amount2` _**must**_ be aligned with the current ratio of the pool. Fetch the current price with `GET /ratio/{tokenA}/{tokenB}`, or let the API compute aligned amounts for you with `GET /quoteLPDeposit/{tokenA}/{tokenB}`.
 {% endhint %}
 
-**3.4.3 - Withdraw orders:&#x20;**_**removing liquidity from a pool**_**&#x20;(\~5 kB)**
+**3.4.3 - Withdraw orders: _removing liquidity from a pool_ (\~5 kB)**
 
-This choice removes liquidity from a pool, and puts the withdrawn tokens into a `TradingBalance`. The LP tokens must already exist as a funded `TradingBalance` for the actor.
+This choice removes liquidity from a pool and puts the withdrawn tokens into a `TradingBalance`. The LP tokens must already exist as a funded `TradingBalance` for the actor.
 
 **Choice Signature**
 
@@ -478,7 +478,7 @@ $ curl -s -X POST \
     }' | jq
 ```
 
-**Exercising `AMMRules_WithdrawTradingBalance`**&#x20;
+**Exercising `AMMRules_WithdrawTradingBalance`**
 
 The choice supports both full and partial withdrawals, and consolidates fragmented balances in a single transaction.
 
@@ -507,13 +507,13 @@ nonconsuming choice AMMRules_WithdrawTradingBalance : TransferInstructionResult
 
 #### 3.5 - Monitor for filled orders
 
-For orders created from holdings (3.2), when an order is filled by the venue, the original order contract, the consumed input(s), and the new output(s) are produced in the _same_ transaction. Detection is therefore as simple as watching for the order's archival.
+When an order created from holdings (3.2) is filled by the venue, the order's archival, the consumption of its input(s), and the creation of its output(s) all appear in the _same_ transaction. Detection is therefore as simple as watching for the order's archival.
 
 **Recommended**\
 Use **PQS** (Participant Query Store) to subscribe to the relevant template streams.
 
 **Without PQS**\
-Query the participant's contracts endpoint directly for active `SwapOrder` contracts filtered by your actor. When the contract disappears, the fill has occurred; the order's outputs are created in the same transaction.
+Query the participant's contracts endpoint directly for active contracts filtered by your actor. When the contract disappears, the fill has occurred; the order's outputs are created in the same transaction.
 
 ### 4.0 - Type Reference
 
@@ -541,7 +541,7 @@ This is a consolidated list of every choice and template you'll touch as an inte
 * `WithdrawOrder` : pending LP redemption; archived on fill
 * `TradingBalance` : per user, per instrument, collateral for liquidity deposit and withdrawal orders
 * `SwapOrderBatcher` : per user helper for creating V2 swap orders in bulk
-* `Allocation` (token-standard V2) : committed settlement allocation; archived and recreated with updated funding on every fill
+* `Allocation` (token-standard-v2) : committed settlement allocation; archived and recreated with updated funding on every fill
 
 **Enums**
 
