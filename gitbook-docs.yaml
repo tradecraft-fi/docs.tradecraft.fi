@@ -104,3 +104,9 @@ site:
           default: true
           content:
             directory: ./security
+    - type: section-group
+      key: section-group-2
+      title: Partnerships
+      icon: handshake
+      draft: true
+      children: []
