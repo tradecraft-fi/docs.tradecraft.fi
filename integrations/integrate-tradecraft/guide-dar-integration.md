@@ -6,7 +6,7 @@ icon: file-shield
 
 ### Building on _Tradecraft_.
 
-**INTEGRATION GUIDE - V1.3.3**\
+**INTEGRATION GUIDE - V1.3.4**\
 A developer's reference for integrating the Canton-native AMM into your application. The Tradecraft daml package is available on request. Contact us by email at [info@tradecraft.fi](mailto:info@tradecraft.fi).
 
 ***
@@ -96,7 +96,7 @@ $ curl https://api.tradecraft.fi/v1/pools | jq
 **Best for wallets that want to surface swaps to UI users, and for integrations that are not expected to make regular trades.**
 
 {% hint style="danger" %}
-**Critical safety notice:_For immediate mode swaps, a transfer pre-approval MUST be active for both tokens the user is swapping between BEFORE the order is submitted._**
+**Critical safety notice:**_**For immediate mode swaps, a transfer pre-approval MUST be active for both tokens the user is swapping between BEFORE the order is submitted.**_
 
 Without it, **the swap still executes**: the input is consumed on fill, but **the output is NOT credited to the wallet**. It arrives as a pending transfer instruction that the user must accept before it expires, and so does the refunded input when an order fails at execution (for example on `minOut`). An instruction that is not accepted in time is never delivered, so missing pre-approval risks **loss of funds**. An order cancelled before it executes never moves the input, which stays in the user's allocation until the user withdraws it.
 {% endhint %}
@@ -462,7 +462,7 @@ nonconsuming choice AMMRules_AddTradingBalance : ContractId TradingBalance
 **TIP:** Avoid UTXO fragmentation. Pass _**every**_ known `TradingBalance` contract ID for the given asset into `existingBalances` on every call. They will be consolidated atomically into a single new balance, keeping your contract set tidy and reducing downstream gas costs.
 {% endhint %}
 
-**3.4.2 - Deposit orders: _adding liquidity to a pool_ (\~5 kB)**
+**3.4.2 - Deposit orders:&#x20;**_**adding liquidity to a pool**_**&#x20;(\~5 kB)**
 
 This choice creates a `DepositOrder`. When the venue executes it, `amount1` and `amount2` are debited from the actor's `TradingBalance` contracts and added to the pool, and the minted LP tokens are credited to an LP-token `TradingBalance` (instrument admin = vault, id = `ammId`). Both amounts must already exist as funded `TradingBalance` contracts for the actor (3.4.1). If the venue cannot execute the order (insufficient balance, ratio, or `minOut`), it cancels it and the balances are untouched. The actor can withdraw a pending order with `DepositOrder_Withdraw`.
 
@@ -503,7 +503,7 @@ template DepositOrder
 **NOTE:** `amount1` and `amount2` are amounts of the pool's `instrument1` and `instrument2` (`token1` and `token2` in `/pools`), and _**must**_ match the pool's current ratio to within 0.01%. The ratio is checked when the venue executes the order, not when it is created, and an out-of-ratio deposit is cancelled rather than adjusted. Fetch the current price with `GET /ratio/{tokenA}/{tokenB}`, or let the API compute aligned amounts for you with `GET /quoteLPDeposit/{tokenA}/{tokenB}`.
 {% endhint %}
 
-**3.4.3 - Withdraw orders: _removing liquidity from a pool_ (\~5 kB)**
+**3.4.3 - Withdraw orders:&#x20;**_**removing liquidity from a pool**_**&#x20;(\~5 kB)**
 
 This choice creates a `WithdrawOrder`. When the venue executes it, the LP tokens are burned and the withdrawn amounts of both pool instruments are credited to the actor's `TradingBalance` contracts. The LP tokens must already exist as a funded `TradingBalance` for the actor. If the venue cannot execute the order (insufficient LP tokens or slippage), it cancels it. The actor can withdraw a pending order with `WithdrawOrder_Withdraw`.
 
