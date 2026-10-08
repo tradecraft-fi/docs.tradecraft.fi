@@ -597,7 +597,7 @@ paths:
         CC/Amulet is not served. Read it from the Splice Scan API per submission.
       operationId: getAllocationFactoryContext
       tags:
-        - Tokens
+        - Swaps
       parameters:
         - $ref: "#/components/parameters/token"
       responses:
@@ -615,6 +615,97 @@ paths:
                 $ref: "#/components/schemas/Error"
         "503":
           description: No context is available for this token right now.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /swap-ticket:
+    get:
+      summary: Get everything needed to place one swap
+      description: |
+        To swap by transfer:
+
+        1. Send a token-standard transfer of `amount_in` of `in.instrument_id` to `pool_party`.
+        2. Copy `min_out` into the transfer metadata under the key `memo_key`.
+
+        The ledger refunds the transfer instead of filling it below `min_out`.
+        A transfer without the memo key swaps with no floor.
+
+        To swap directly, submit against `amm_cid` with the contracts in
+        `disclosures` and `min_out` as the floor. `memo_key` does not apply.
+
+        `amm_cid`, the quote and `disclosures` come from one read, so they
+        always agree. All three change when the pool settles a batch, so
+        request a new ticket if the swap is delayed.
+
+        `pool_party` comes from the pool identity. The endpoint returns it even
+        if no magic-address watcher runs for the pair.
+
+        `disclosures` carries the pool's contracts only. A CC transfer also
+        needs `AmuletRules` and a current `OpenMiningRound`. Read those from
+        the Splice Scan API per submission.
+      operationId: getSwapTicket
+      tags:
+        - Swaps
+      parameters:
+        - name: in
+          in: query
+          required: true
+          description: Symbol of the token to sell.
+          schema:
+            type: string
+            example: "CC"
+        - name: out
+          in: query
+          required: true
+          description: Symbol of the token to buy.
+          schema:
+            type: string
+            example: "USDCx"
+        - name: amount
+          in: query
+          required: true
+          description: |
+            Amount of the `in` token to sell. The endpoint cuts this to the
+            ten decimal places a Daml Decimal carries, then quotes the cut
+            amount as `amount_in`.
+          schema:
+            type: number
+            format: double
+            minimum: 0
+            exclusiveMinimum: true
+            example: 100.0
+        - name: slippage
+          in: query
+          required: true
+          description: |
+            Slippage tolerance as a fraction, not a percentage. 0.005 is 0.5%.
+            Required: a ticket with no floor can cost the caller money.
+          schema:
+            type: number
+            format: double
+            minimum: 0
+            maximum: 1
+            exclusiveMaximum: true
+            example: 0.005
+      responses:
+        "200":
+          description: Swap ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SwapTicketResponse"
+        "400":
+          description: |
+            A parameter is missing or malformed, no pool holds the pair, or
+            the floor rounds to zero at Daml's precision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The pool exists, but the endpoint cannot build a ticket for it now
           content:
             application/json:
               schema:
@@ -1185,6 +1276,98 @@ components:
           description: When this context was last fetched from the registry
           example: "2026-01-20T14:35:00Z"
 
+    SwapTicketToken:
+      type: object
+      description: |
+        The identity of one token in the swap.
+        `in` is the token you send. `out` is the token the pool pays.
+      required:
+        - code
+        - instrument_id
+        - registry_url
+      properties:
+        code:
+          type: string
+          description: The token symbol, as requested
+          example: "CC"
+        instrument_id:
+          $ref: "#/components/schemas/InstrumentId"
+        registry_url:
+          type: string
+          format: uri
+          description: URL of the token registry
+          example: "https://registry.example.com"
+
+    SwapTicketResponse:
+      type: object
+      description: Everything needed to place one swap against a pool.
+      required:
+        - in
+        - out
+        - amount_in
+        - amm_id
+        - amm_cid
+        - pool_party
+        - expected_out
+        - price_impact
+        - slippage
+        - min_out
+        - memo_key
+        - disclosures
+      properties:
+        in:
+          $ref: "#/components/schemas/SwapTicketToken"
+        out:
+          $ref: "#/components/schemas/SwapTicketToken"
+        amount_in:
+          type: number
+          format: double
+          description: |
+            Amount of the `in` token to transfer, cut to Daml Decimal
+            precision. Transfer this value, not the `amount` you requested.
+          example: 100.0
+        amm_id:
+          type: string
+          description: The pool identifier
+          example: "TC CC/USDCx LP"
+        amm_cid:
+          type: string
+          description: Contract id of the AMM that produced this quote and that `disclosures` is valid for
+          example: "00a1b2c3..."
+        pool_party:
+          type: string
+          description: Send the input transfer to this magic address
+          example: "tc-swp_CC-USDCx::1220abcd..."
+        expected_out:
+          type: number
+          format: double
+          description: Amount of the `out` token the pool pays at its current state
+          example: 12.93
+        price_impact:
+          type: number
+          format: double
+          description: The fraction by which this swap moves the pool price
+          example: 0.0002
+        slippage:
+          type: number
+          format: double
+          description: The slippage tolerance used for the floor, as requested
+          example: 0.005
+        min_out:
+          type: string
+          description: |
+            The slippage floor. Copy this string into the transfer memo
+            without change. It is a string, not a number, because a JSON
+            number can re-encode as scientific notation, which the on-ledger
+            parser rejects.
+          example: "12.86535"
+        memo_key:
+          type: string
+          description: Metadata key that carries the floor
+          example: "splice.lfdecentralizedtrust.org/reason"
+        disclosures:
+          $ref: "#/components/schemas/PoolDisclosuresResponse"
+
 tags:
   - name: Health
     description: Health check endpoints.
@@ -1200,3 +1383,5 @@ tags:
     description: Trade quote calculations.
   - name: Liquidity
     description: Liquidity provider operations.
+  - name: Swaps
+    description: Everything needed to place a swap.
